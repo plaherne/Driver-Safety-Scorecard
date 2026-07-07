@@ -258,7 +258,9 @@
                 }
 
                 const finalRegion = getRegion(finalGroup);
-                const isActive = sData.distanceKm > 0;
+                
+                // Allow activity tracking if distanceKm or distanceMiles are positive
+                const isActive = sData.distanceKm > 0 || sData.distanceMiles > 0;
                 
                 let preTrips = assetInfo?.preTrips || 0;
                 let postTrips = assetInfo?.postTrips || 0;
@@ -413,6 +415,7 @@
                 const ixName = getCleanIndices("Name")[0];
                 const ixGroup = getCleanIndices("Group")[0];
                 const ixDistKm = getCleanIndices("Distance (km)")[0];
+                const ixDistMi = getCleanIndices(["Distance (mi)", "Distance (miles)"])[0];
                 const ixTotalScore = getCleanIndices("Total Score")[0];
                 const ixScoringClass = getCleanIndices(["Scoring Classification", "Score Classification"])[0];
                 const ixTotalOccurrences = getCleanIndices(["Total Occurrences", "Total Occurances"])[0];
@@ -442,13 +445,23 @@
 
                 const processed = rows.map(r => {
                     const groupStr = ixGroup !== undefined && r[ixGroup] ? String(r[ixGroup]).replace("CDL, ", "") : "";
-                    const distKm = ixDistKm !== undefined ? parseFloat(r[ixDistKm]) || 0 : 0;
+                    
+                    let distKm = 0;
+                    let distMiles = 0;
+                    if (ixDistKm !== undefined && r[ixDistKm] !== undefined && r[ixDistKm] !== "") {
+                        distKm = parseFloat(r[ixDistKm]) || 0;
+                        distMiles = distKm * 0.621371;
+                    } else if (ixDistMi !== undefined && r[ixDistMi] !== undefined && r[ixDistMi] !== "") {
+                        distMiles = parseFloat(r[ixDistMi]) || 0;
+                        distKm = distMiles / 0.621371;
+                    }
+
                     return {
                         email: String(r[ixName]).toLowerCase().trim(),
                         group: groupStr,
                         region: getRegion(groupStr),
                         distanceKm: distKm,
-                        distanceMiles: distKm * 0.621371,
+                        distanceMiles: distMiles,
                         totalScore: ixTotalScore !== undefined ? parseFloat(r[ixTotalScore]) || 0 : 0,
                         scoringClass: ixScoringClass !== undefined && r[ixScoringClass] ? String(r[ixScoringClass]) : "N/A",
                         totalOccurrences: ixTotalOccurrences !== undefined ? parseInt(r[ixTotalOccurrences]) || 0 : 0,
@@ -2466,3 +2479,4 @@
 
 </body>
 </html>
+
