@@ -351,7 +351,7 @@
             });
         };
 
-        const processScorecardFile = (file, callback) => {
+        const processScorecardFile = (file, callback, onError) => {
             if (!file) return;
             const reader = new FileReader();
             reader.onload = (evt) => {
@@ -394,7 +394,7 @@
                 }
 
                 if (headerRowIdx === -1) {
-                    alert("Could not find 'Group' column in Scorecard.");
+                    if (onError) onError("Could not find 'Group' column in Scorecard.");
                     return;
                 }
 
@@ -475,13 +475,15 @@
             reader.readAsBinaryString(file);
         };
 
-        const processAssetFile = (file, callback) => {
+        const processAssetFile = (file, callback, onError) => {
             if (!file) return;
             const reader = new FileReader();
             reader.onload = (evt) => {
                 const bstr = evt.target.result;
                 const wb = window.XLSX.read(bstr, { type: 'binary' });
-                const ws = wb.Sheets[wb.SheetNames[0]];
+                // Fix: Specifically look for the "Report" sheet instead of blindly taking the first one
+                const sheetName = wb.SheetNames.includes("Report") ? "Report" : wb.SheetNames[0];
+                const ws = wb.Sheets[sheetName];
                 const data = window.XLSX.utils.sheet_to_json(ws, { header: 1 });
 
                 let headerRowIdx = -1;
@@ -493,7 +495,7 @@
                 }
 
                 if (headerRowIdx === -1) {
-                    alert("Could not find 'First Name' column in Asset Report.");
+                    if (onError) onError("Could not find 'First Name' column in Asset Report.");
                     return;
                 }
 
@@ -1399,14 +1401,17 @@
                         setTrendAssetData(null);
                         setTrendDateRange("");
                     }
-                });
+                }, (errMsg) => showToast(errMsg, "error"));
                 e.target.value = null;
             };
 
             const handleAssetUpload = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
-                processAssetFile(file, (data) => setAssetData(data));
+                processAssetFile(file, 
+                    (data) => setAssetData(data),
+                    (errMsg) => showToast(errMsg, "error")
+                );
                 e.target.value = null;
             };
 
