@@ -133,13 +133,60 @@
                 const d = new Date(Math.round((dateOnly - 25569) * 86400 * 1000));
                 return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
             }
-            const str = String(val).trim().split(' ')[0];
-            const parts = str.split('-');
-            if (parts.length === 3) {
-                return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+            if (typeof val === 'object' && val instanceof Date) return isNaN(val.getTime()) ? null : val;
+            
+            const str = String(val).trim();
+            
+            // Check for natural dates like "Jul 20, 2026" first
+            const naturalMatch = str.match(/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}/i);
+            if (naturalMatch) {
+                const d = new Date(naturalMatch[0]);
+                if (!isNaN(d.getTime())) return d;
             }
-            const d = new Date(val);
-            return isNaN(d.getTime()) ? null : d;
+
+            const datePart = str.split(/[ T]/)[0]; // Split by space or T to isolate the date
+            
+            const parseParts = (parts) => {
+                if (parts.length !== 3) return null;
+                let p1 = parseInt(parts[0], 10);
+                let p2 = parseInt(parts[1], 10);
+                let p3 = parseInt(parts[2], 10);
+                if (isNaN(p1) || isNaN(p2) || isNaN(p3)) return null;
+
+                if (p3 < 100) p3 += 2000;
+                
+                // If the first part is a year (YYYY-MM-DD)
+                if (p1 > 1000) return new Date(p1, p2 - 1, p3);
+                
+                // If the middle part is > 12, it MUST be MM/DD/YYYY
+                if (p2 > 12) return new Date(p3, p1 - 1, p2);
+                
+                // If the first part is > 12, it MUST be DD/MM/YYYY (European logic)
+                if (p1 > 12) return new Date(p3, p2 - 1, p1);
+                
+                // Otherwise, it's ambiguous (e.g., 04/05/2026). Try native parsing first.
+                const nativeDate = new Date(str);
+                if (!isNaN(nativeDate.getTime())) return nativeDate;
+                
+                // If native fails, default to US (MM/DD/YYYY)
+                return new Date(p3, p1 - 1, p2);
+            };
+
+            const partsSlash = datePart.split('/');
+            if (partsSlash.length === 3) {
+                const d = parseParts(partsSlash);
+                if (d && !isNaN(d.getTime())) return d;
+            }
+            
+            const partsDash = datePart.split('-');
+            if (partsDash.length === 3) {
+                const d = parseParts(partsDash);
+                if (d && !isNaN(d.getTime())) return d;
+            }
+
+            // Ultimate fallback for natural strings (e.g. "August 3, 2026")
+            const fallbackDate = new Date(str);
+            return isNaN(fallbackDate.getTime()) ? null : fallbackDate;
         };
 
         const formatDateStr = (dateVal) => {
@@ -363,32 +410,8 @@
                 const ws = wb.Sheets[sheetName];
                 const data = window.XLSX.utils.sheet_to_json(ws, { header: 1 });
 
-                let fromDate = "";
-                let toDate = "";
-                for (let i = 0; i < Math.min(30, data.length); i++) {
-                    const row = data[i];
-                    if (!row) continue;
-                    for (let j = 0; j < Math.min(row.length, 5); j++) {
-                        const cellVal = String(row[j] || "").trim().toLowerCase().replace(/:/g, '');
-                        if (cellVal === "from" || cellVal === "to") {
-                            let dateVal = null;
-                            for (let k = j + 1; k < Math.min(row.length, j + 5); k++) {
-                                if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== "") {
-                                    dateVal = row[k];
-                                    break;
-                                }
-                            }
-                            if (cellVal === "from" && dateVal) fromDate = dateVal;
-                            if (cellVal === "to" && dateVal) toDate = dateVal;
-                            break;
-                        }
-                    }
-                }
-
-                const rangeString = (fromDate && toDate) ? `${formatDateStr(fromDate)} - ${formatDateStr(toDate)}` : "";
-
                 let headerRowIdx = -1;
-                for (let i = 0; i < Math.min(20, data.length); i++) {
+                for (let i = 0; i < Math.min(30, data.length); i++) {
                     if (data[i] && data[i].some(c => typeof c === 'string' && c.replace(/\*\*/g, '').trim() === "Group")) {
                         headerRowIdx = i;
                         break;
@@ -399,6 +422,57 @@
                     if (onError) onError("Could not find 'Group' column in Scorecard.");
                     return;
                 }
+
+                let fromDate = "";
+                let toDate = "";
+                let potentialDates = [];
+
+                // Look for dates only in the metadata rows ABOVE the main table headers
+                for (let i = 0; i < headerRowIdx; i++) {
+                    const row = data[i];
+                    if (!row) continue;
+                    
+                    for (let j = 0; j < row.length; j++) {
+                        const cellValRaw = String(row[j] || "").trim();
+                        if (!cellValRaw) continue;
+                        
+                        // Strip colons, asterisks, and spaces to find labels like "**From"
+                        const cellVal = cellValRaw.toLowerCase().replace(/[:*\s]/g, '');
+                        
+                        if (cellVal === "from" || cellVal === "startdate" || cellVal === "start") {
+                            for (let k = j + 1; k < Math.min(row.length, j + 5); k++) {
+                                if (row[k]) { fromDate = row[k]; break; }
+                            }
+                            if (!fromDate && i + 1 < headerRowIdx && data[i+1][j]) fromDate = data[i+1][j];
+                        }
+                        
+                        if (cellVal === "to" || cellVal === "enddate" || cellVal === "end") {
+                            for (let k = j + 1; k < Math.min(row.length, j + 5); k++) {
+                                if (row[k]) { toDate = row[k]; break; }
+                            }
+                            if (!toDate && i + 1 < headerRowIdx && data[i+1][j]) toDate = data[i+1][j];
+                        }
+
+                        // Extract any date-like patterns just in case they are mushed into a title cell
+                        const extractedDates = cellValRaw.match(/\b(\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4})\b/g);
+                        if (extractedDates) {
+                            potentialDates.push(...extractedDates);
+                        }
+                        // Extract Natural Dates like "Jul 20, 2026"
+                        const naturalDates = cellValRaw.match(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}\b/gi);
+                        if (naturalDates) {
+                            potentialDates.push(...naturalDates);
+                        }
+                    }
+                }
+
+                // Fallback: If "From" and "To" weren't explicitly found, use the first two dates found in metadata
+                if (!fromDate && !toDate && potentialDates.length >= 2) {
+                    fromDate = potentialDates[0];
+                    toDate = potentialDates[1];
+                }
+
+                const rangeString = (fromDate && toDate) ? `${formatDateStr(fromDate)} - ${formatDateStr(toDate)}` : "Unknown Date Range";
 
                 const headers = data[headerRowIdx];
                 const getCleanIndices = (baseNames) => {
@@ -2479,4 +2553,3 @@
 
 </body>
 </html>
-
